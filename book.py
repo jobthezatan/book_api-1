@@ -1,69 +1,82 @@
 from flask import Flask, request, jsonify
-from flask_cors import CORS, cross_origin
-
-# Sample data (in-memory database for simplicity)
-books = [
-    {"id": 1, "title": "The Let Them Theory: A Life-Changing Tool That Millions of People Can't Stop Talking About", "author": "Mel Robbins", "image_url": "https://images-na.ssl-images-amazon.com/images/I/91I1KDnK1kL._AC_UL381_SR381,381_.jpg"},
-    {"id": 2, "title": "Forgotten Home Apothecary : 250 Powerful Remedies at Your Fingertips", "author": "Dr. Nicole Apelian", "image_url": "https://images-na.ssl-images-amazon.com/images/I/91-E86oM2IL._AC_UL381_SR381,381_.jpg"},
-    {"id": 3, "title": "Seven Things You Can't Say About China", "author": "Tom Cotton", "image_url": "https://images-na.ssl-images-amazon.com/images/I/81+mN748qkL._AC_UL381_SR381,381_.jpg"},
-    {"id": 4, "title": "Atomic Habits: An Easy & Proven Way to Build Good Habits & Break Bad Ones", "author" : "James Clear", "image_url": "https://images-na.ssl-images-amazon.com/images/I/81ANaVZk5LL._AC_UL381_SR381,381_.jpg"}
-]
+from flask_cors import CORS
+from pymongo import MongoClient
+from bson import ObjectId
 
 app = Flask(__name__)
-CORS(app)
-app.config['CORS_HEADERS']='Content-Type'
+CORS(app, resources={r"/*": {"origins": "*"}})  # อนุญาตให้ React เรียก API ได้
+
+# 🔹 เชื่อมต่อ MongoDB Atlas
+MONGO_URI = "mongodb+srv://siwakorn:zR0qObLa79HPv2pZ@cluster0.dgnot.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+client = MongoClient(MONGO_URI)
+
+# 🔹 ใช้ฐานข้อมูล `book`
+db = client.book  
+books_collection = db.book  # 📌 ใช้ collection `book`
 
 @app.route("/")
 def hello_world():
     return "<p>Hello, World!</p>"
 
-# Create (POST) operation
+# 🔹 CREATE: เพิ่มหนังสือใหม่ (POST)
 @app.route('/books', methods=['POST'])
 def create_book():
     data = request.get_json()
-
+    
     new_book = {
-        "id": len(books) + 1,
         "title": data["title"],
         "author": data["author"],
         "image_url": data["image_url"]
     }
 
-    books.append(new_book)
+    result = books_collection.insert_one(new_book)
+    new_book["_id"] = str(result.inserted_id)  # แปลง ObjectId เป็น string
     return jsonify(new_book), 201
 
-# Read (GET) operation - Get all books
+# 🔹 READ: ดึงหนังสือทั้งหมด (GET)
 @app.route('/books', methods=['GET'])
-@cross_origin()
 def get_all_books():
+    books = list(books_collection.find({}))
+    
+    for book in books:
+        book["_id"] = str(book["_id"])
+    
     return jsonify({"books": books})
 
-# Read (GET) operation - Get a specific book by ID
-@app.route('/books/<int:book_id>', methods=['GET'])
+# 🔹 READ: ดึงหนังสือจาก ID (GET)
+@app.route('/books/<book_id>', methods=['GET'])
 def get_book(book_id):
-    book = next((b for b in books if b["id"] == book_id), None)
+    book = books_collection.find_one({"_id": ObjectId(book_id)})
+    
     if book:
+        book["_id"] = str(book["_id"])
         return jsonify(book)
     else:
         return jsonify({"error": "Book not found"}), 404
 
-# Update (PUT) operation
-@app.route('/books/<int:book_id>', methods=['PUT'])
+# 🔹 UPDATE: อัปเดตข้อมูลหนังสือ (PUT)
+@app.route('/books/<book_id>', methods=['PUT'])
 def update_book(book_id):
-    book = next((b for b in books if b["id"] == book_id), None)
-    if book:
-        data = request.get_json()
-        book.update(data)
-        return jsonify(book)
+    data = request.get_json()
+    
+    result = books_collection.update_one({"_id": ObjectId(book_id)}, {"$set": data})
+    
+    if result.matched_count:
+        updated_book = books_collection.find_one({"_id": ObjectId(book_id)})
+        updated_book["_id"] = str(updated_book["_id"])
+        return jsonify(updated_book)
     else:
         return jsonify({"error": "Book not found"}), 404
-    
-# Delete operation
-@app.route('/books/<int:book_id>', methods=['DELETE'])
+
+# 🔹 DELETE: ลบหนังสือ (DELETE)
+@app.route('/books/<book_id>', methods=['DELETE'])
 def delete_book(book_id):
-    global books
-    books = [b for b in books if b["id"] != book_id]
-    return jsonify({"message": "Book deleted successfully"})
+    result = books_collection.delete_one({"_id": ObjectId(book_id)})
+    
+    if result.deleted_count:
+        return jsonify({"message": "Book deleted successfully"})
+    else:
+        return jsonify({"error": "Book not found"}), 404
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5001, debug=True)
